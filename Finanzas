@@ -1,0 +1,202 @@
+/******************************************************************************/
+/******************************************************************************/
+
+/***************************************
+ * Conversión segura de montos
+ ***************************************/
+function toNumber(v) {
+  if (typeof v === "number") return v;
+  if (typeof v !== "string") return 0;
+
+  return parseFloat(
+    v.replace(/\$/g, "")
+     .replace(/\./g, "")
+     .replace(/,/g, ".")
+  ) || 0;
+}
+
+/******************************************************************************/
+/******************************************************************************/
+
+/***************************************
+ * PROCESAR CUOTAS VISA
+ ***************************************/
+function actualizarCuotasVisa() {
+
+  const hoja = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const rangoDatos = hoja.getDataRange();
+  const valores = rangoDatos.getValues();
+
+  const colCuotas = 1;
+  const colMonto = 2;
+  const colAhorro = 4;
+  const colTotalEsteMes = 5;
+  const colSueldo = 9;
+
+  // --- AHORRO ---
+  let ahorro = toNumber(hoja.getRange(2, colAhorro + 1).getValue());
+
+  // --- TOTAL ESTE MES ---
+  let totalEsteMes = 0;
+  for (let i = 1; i < valores.length; i++) {
+    let monto = toNumber(valores[i][colMonto]);
+    if (monto > 0) totalEsteMes += monto;
+  }
+
+  hoja.getRange(5, colTotalEsteMes + 1).setValue("$" + totalEsteMes.toFixed(2));
+
+  let totalConAhorro = totalEsteMes - ahorro;
+  if (totalConAhorro < 0) totalConAhorro = 0;
+
+  hoja.getRange(2, colTotalEsteMes + 1).setValue("$" + totalConAhorro.toFixed(2));
+
+  // --- SUELDO ORIGINAL (J2) ---
+  let sueldoOriginal = toNumber(hoja.getRange(2, colSueldo + 1).getValue());
+
+  /***************************************
+   * J4 = J2 - F5
+   ***************************************/
+  let totalF5 = toNumber(hoja.getRange(5, colTotalEsteMes + 1).getValue());
+  let sueldoActualizado = sueldoOriginal - totalF5;
+  if (sueldoActualizado < 0) sueldoActualizado = 0;
+
+  hoja.getRange(4, colSueldo + 1).setValue(
+    "$" + sueldoActualizado.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+  );
+
+  /***************************************
+   * Reducir cuotas
+   ***************************************/
+  for (let i = 1; i < valores.length; i++) {
+    if (!isNaN(valores[i][colCuotas])) valores[i][colCuotas]--;
+  }
+
+  hoja.getRange(2, colCuotas + 1, valores.length - 1, 1)
+    .setValues(valores.slice(1).map(row => [row[colCuotas]]));
+
+  /***************************************
+   * Eliminar filas terminadas
+   ***************************************/
+  for (let i = valores.length - 1; i > 0; i--) {
+    if (valores[i][colCuotas] <= 0) hoja.deleteRow(i + 1);
+  }
+}
+
+/******************************************************************************/
+/******************************************************************************/
+
+/***************************************
+ * onOpen — inicialización
+ ***************************************/
+function onOpen() {
+
+  const hoja = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const rangoDatos = hoja.getDataRange();
+  const valores = rangoDatos.getValues();
+
+  const colMonto = 2;
+  const colAhorro = 4;
+  const colTotalEsteMes = 5;
+  const colSueldo = 9;
+
+  // --- AHORRO ---
+  let ahorro = toNumber(hoja.getRange(2, colAhorro + 1).getValue());
+
+  // --- TOTAL ESTE MES ---
+  let totalEsteMes = 0;
+  for (let i = 1; i < valores.length; i++) {
+    let monto = toNumber(valores[i][colMonto]);
+    if (monto > 0) totalEsteMes += monto;
+  }
+
+  hoja.getRange(5, colTotalEsteMes + 1).setValue("$" + totalEsteMes.toFixed(2));
+
+  let totalConAhorro = totalEsteMes - ahorro;
+  if (totalConAhorro < 0) totalConAhorro = 0;
+
+  hoja.getRange(2, colTotalEsteMes + 1).setValue("$" + totalConAhorro.toFixed(2));
+
+  // --- SUELDO ORIGINAL ---
+  let sueldoOriginal = toNumber(hoja.getRange(2, colSueldo + 1).getValue());
+
+  /***************************************
+   * J4 = J2 - F5
+   ***************************************/
+  let totalF5 = toNumber(hoja.getRange(5, colTotalEsteMes + 1).getValue());
+  let sueldoActualizado = sueldoOriginal - totalF5;
+  if (sueldoActualizado < 0) sueldoActualizado = 0;
+
+  hoja.getRange(4, colSueldo + 1).setValue(
+    "$" + sueldoActualizado.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+  );
+
+  /***************************************
+   * FORMATEAR COLUMNA M CON $
+   ***************************************/
+  const colM = 13; // Columna M (1-based)
+  const ultimaFila = hoja.getLastRow();
+
+  if (ultimaFila >= 2) {
+    const rangoM = hoja.getRange(2, colM, ultimaFila - 1, 1);
+    const valoresM = rangoM.getValues();
+
+    for (let i = 0; i < valoresM.length; i++) {
+      let v = valoresM[i][0];
+
+      if (v === "" || v === null) continue;
+
+      let numero = toNumber(v);
+      if (numero > 0) {
+        valoresM[i][0] =
+          "$" + numero.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+      }
+    }
+
+    rangoM.setValues(valoresM);
+  }
+
+}
+
+/******************************************************************************/
+/******************************************************************************/
+
+/***************************************
+ * CALCULAR PRÓXIMOS COBROS (H2 ↓)
+ ***************************************/
+function calcularProximosCobros() {
+
+  const hoja = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const valores = hoja.getDataRange().getValues();
+
+  const colCuotas = 1;
+  const colMonto = 2;
+  const colInicioPrediccion = 7; // Columna H
+
+  const meses = 7;
+  let prediccion = Array(meses).fill(0);
+
+  for (let i = 1; i < valores.length; i++) {
+    let cuotasPendientes = parseInt(valores[i][colCuotas]);
+    let montoCuota = toNumber(valores[i][colMonto]);
+
+    if (cuotasPendientes > 1 && montoCuota > 0) {
+      for (let m = 2; m <= Math.min(cuotasPendientes, meses + 1); m++) {
+        prediccion[m - 2] += montoCuota;
+      }
+    }
+  }
+
+  hoja.getRange(2, colInicioPrediccion + 1, meses, 1).clearContent();
+
+  hoja.getRange(2, colInicioPrediccion + 1, meses, 1)
+    .setValues(
+      prediccion.map(v => [
+        v > 0
+          ? "$" + v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+          : ""
+      ])
+    );
+}
+
+/******************************************************************************/
+/******************************************************************************/
